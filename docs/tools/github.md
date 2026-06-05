@@ -18,8 +18,8 @@
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `op` | `"repo_view" \| "pr_create" \| "pr_checkout" \| "pr_push" \| "search_issues" \| "search_prs" \| "search_code" \| "search_commits" \| "search_repos" \| "run_watch"` | Yes | Dispatch selector. `GithubTool.execute()` switches only on this field. |
-| `repo` | `string` | No | `owner/repo` override. Ignored when the identifier argument is already a full GitHub URL. For `search_issues`/`search_prs`/`search_code`/`search_commits`, defaults to the current checkout's `owner/repo` when omitted (skipped when the query already contains a `repo:`/`org:`/`user:`/`owner:` qualifier or when current-repo resolution fails). Required in practice when `gh` cannot infer repo context from the current checkout. |
-| `branch` | `string` | No | Used by `repo_view`, `pr_push`, and `run_watch`. `run_watch` falls back to current git branch when `run` is omitted; `pr_push` falls back to current branch. |
+| `repo` | `string` | No | `owner/repo` override. For `run_watch`, explicit `repo` is authoritative and all run/branch/ref/sha API calls stay scoped to it; cross-repo calls without an explicit selector fail fast instead of using cwd HEAD. For `search_issues`/`search_prs`/`search_code`/`search_commits`, defaults to the current checkout's `owner/repo` when omitted (skipped when the query already contains a `repo:`/`org:`/`user:`/`owner:` qualifier or when current-repo resolution fails). Required in practice when `gh` cannot infer repo context from the current checkout. |
+| `branch` | `string` | No | Used by `repo_view`, `pr_push`, and `run_watch`. In `run_watch`, it is an explicit selector resolved in the selected repo; current-branch fallback is allowed only when no explicit repo differs from cwd. `pr_push` falls back to current branch. |
 | `pr` | `string \| string[]` | No | Used by `pr_checkout`. Each item may be a PR number, branch name, or GitHub PR URL. Array form enables batching. Omitted means current branch PR. |
 | `force` | `boolean` | No | Used only by `pr_checkout`. Defaults to `false`; allows resetting an existing `pr-<number>` local branch to the PR head commit. |
 | `forceWithLease` | `boolean` | No | Used only by `pr_push`; passed through to git push. |
@@ -38,6 +38,8 @@
 | `dateField` | `"created" \| "updated"` | No | Date qualifier field for issue/PR/repo search. Defaults to `created`; repo search maps `updated` to GitHub's `pushed:` qualifier. Ignored for commit search, which always uses `committer-date:`. |
 | `limit` | `number` | No | Used by all `search_*` ops. Defaults to `10`, floored, clamped to `50`, and must be `> 0`. |
 | `run` | `string` | No | Used only by `run_watch`. Must be a numeric run ID or full GitHub Actions run URL. |
+| `ref` | `string` | No | Used only by `run_watch`. Resolves a branch, tag, or commit-ish in the selected repo via the GitHub commits API. Mutually exclusive with `branch` and `sha`. |
+| `sha` | `string` | No | Used only by `run_watch`. Watches workflow runs for the provided commit SHA in the selected repo. Mutually exclusive with `branch` and `ref`. |
 | `tail` | `number` | No | Used only by `run_watch`. Defaults to `15`, floored, clamped to `200`, and must be `> 0`. |
 
 ## Outputs
@@ -206,13 +208,16 @@ Push target resolution reads the `branch.<name>.ompPrHeadRef`, `pushRemote`/`rem
 | Aspect | Value |
 | --- | --- |
 | Required fields | `op` |
-| Optional fields | `repo`, `branch`, `run`, `tail` |
-| `gh` command | Repo resolution: `gh repo view --json nameWithOwner -q .nameWithOwner` when `repo` and run URL repo are both absent. Single-run mode uses `gh api --method GET /repos/<repo>/actions/runs/<runId>` and `gh api --method GET /repos/<repo>/actions/runs/<runId>/jobs`. Commit mode uses `gh api --method GET /repos/<repo>/branches/<branch>`, `gh api --method GET /repos/<repo>/actions/runs`, `gh api --method GET /repos/<repo>/actions/runs/<runId>/jobs`, and `gh api /repos/<repo>/actions/jobs/<jobId>/logs` for failed jobs. |
+| Optional fields | `repo`, `branch`, `ref`, `sha`, `run`, `tail` |
+| `gh` command | Repo resolution: `gh repo view --json nameWithOwner -q .nameWithOwner` only when no explicit `repo` or run URL repo is available. Single-run mode uses `gh api --method GET /repos/<repo>/actions/runs/<runId>` and `gh api --method GET /repos/<repo>/actions/runs/<runId>/jobs`. Commit mode resolves branch/ref selectors inside `<repo>` (`/branches/<branch>` or `/commits/<ref>`), lists `/repos/<repo>/actions/runs` by `head_sha`, fetches jobs, and reads failed-job logs via `gh api /repos/<repo>/actions/jobs/<jobId>/logs`. |
 | Batching | Implicit batching only in commit mode: all workflow runs for one commit are tracked together. |
-| Output | Streaming watch snapshots via `onUpdate`, then a final text report. On failure, appends `Full failed-job logs: artifact://<id>` and sets `details.artifactId`. |
+| Output | Streaming watch snapshots via `onUpdate`, then a final text report. Snapshots/results include resolved repo, selector, resolved commit SHA, and matched run IDs/workflow names. On failure, appends `Full failed-job logs: artifact://<id>` and sets `details.artifactId`. |
 
 Watch flow:
 - `run` parsing accepts either a decimal run ID or a full run URL. URL repo must match explicit `repo` when both are given.
+- `branch`, `ref`, and `sha` are mutually exclusive commit selectors. Without a selector, `run_watch` may infer current branch/HEAD only when the resolved repo is the cwd repo.
+- If an explicit `repo` differs from the cwd repo and no selector is supplied, `run_watch` fails before local branch/HEAD lookup instead of falling back to cwd.
+- Commit-mode discovery times out when no matching workflow runs appear for the resolved commit.
 - Poll interval is fixed at 3 seconds (`RUN_WATCH_INTERVAL_DEFAULT`).
 - Failure grace period is fixed at 5 seconds (`RUN_WATCH_GRACE_DEFAULT`). When any failed job appears before completion, the tool emits a note, waits once, re-fetches state, then collects logs so concurrent failures are included.
 - Failed-job logs are fetched with `gh api /repos/<repo>/actions/jobs/<jobId>/logs` via `git.github.run()`, not `json()`. Non-zero exit leaves `available: false` instead of failing the whole watch.
@@ -247,6 +252,7 @@ Watch flow:
 - PR file preview inside the `pr://` view: first `50` files only (`FILE_PREVIEW_LIMIT` in `gh.ts`).
 - Run-watch poll interval: `3s` (`RUN_WATCH_INTERVAL_DEFAULT`).
 - Run-watch failure grace period: `5s` (`RUN_WATCH_GRACE_DEFAULT`).
+- Run-watch no-run discovery timeout: `60s` (`RUN_WATCH_DISCOVERY_TIMEOUT_SECONDS`).
 - Run-watch failed-log tail default: `15` lines (`RUN_WATCH_TAIL_DEFAULT`).
 - Run-watch failed-log tail max: `200` lines (`RUN_WATCH_TAIL_MAX`).
 - PR review comments page size: `100` (`REVIEW_COMMENTS_PAGE_SIZE`).
@@ -267,6 +273,9 @@ Watch flow:
   - invalid numeric `limit` / `tail`
   - invalid `since` / `until` date bound
   - invalid `run` format
+  - conflicting `run_watch` commit selectors (`branch`, `ref`, `sha`)
+  - explicit `run_watch` repo that differs from cwd without `run`, `branch`, `ref`, or `sha`
+  - no workflow runs discovered for the resolved commit before timeout
   - `fill` combined with `title` or `body`
   - missing git repo / branch / HEAD context for checkout, push, or watch
   - `pr_push` on a branch without `ompPrHeadRef` metadata

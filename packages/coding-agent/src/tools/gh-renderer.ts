@@ -26,6 +26,8 @@ type GithubToolRenderArgs = {
 	op?: string;
 	run?: string;
 	branch?: string;
+	ref?: string;
+	sha?: string;
 	repo?: string;
 	pr?: string | string[];
 	query?: string;
@@ -114,6 +116,29 @@ function buildOpMeta(args: GithubToolRenderArgs): string[] {
 		}
 	}
 	return meta;
+}
+
+function formatWatchSelector(kind: string | undefined, value: string | undefined): string | undefined {
+	if (!kind || !value) return undefined;
+	switch (kind) {
+		case "run":
+			return `selector: run ${value}`;
+		case "branch":
+			return `selector: branch ${value}`;
+		case "ref":
+			return `selector: ref ${value}`;
+		case "sha":
+			return `selector: sha ${value}`;
+		case "current":
+			return "selector: current HEAD";
+		default:
+			return `selector: ${value}`;
+	}
+}
+
+function formatMatchedRunSummary(runs: GhRunWatchRunDetails[] | undefined): string | undefined {
+	if (!runs || runs.length === 0) return undefined;
+	return `matched: ${runs.map(run => `#${run.id}${run.workflowName ? ` ${replaceTabs(run.workflowName)}` : ""}`).join(", ")}`;
 }
 
 function getWatchHeader(watch: GhRunWatchViewDetails): string {
@@ -275,6 +300,17 @@ function buildWatchLines(
 	width: number,
 ): string[] {
 	const lines = [theme.fg("muted", getWatchHeader(watch))];
+	const selector = formatWatchSelector(watch.selectorKind, watch.selector);
+	if (selector) {
+		lines.push(theme.fg("dim", selector));
+	}
+	if (watch.headSha) {
+		lines.push(theme.fg("dim", `commit: ${watch.headSha}`));
+	}
+	const matchedRuns = formatMatchedRunSummary(watch.mode === "run" ? (watch.run ? [watch.run] : []) : watch.runs);
+	if (matchedRuns) {
+		lines.push(theme.fg("dim", matchedRuns));
+	}
 
 	if (watch.note) {
 		lines.push(theme.fg("dim", replaceTabs(watch.note)));
@@ -368,13 +404,19 @@ function renderWatchCall(args: GithubToolRenderArgs, options: RenderResultOption
 
 	const runId = typeof args.run === "string" && args.run.trim().length > 0 ? args.run.trim() : undefined;
 	const branch = typeof args.branch === "string" && args.branch.trim().length > 0 ? args.branch.trim() : undefined;
+	const ref = typeof args.ref === "string" && args.ref.trim().length > 0 ? args.ref.trim() : undefined;
+	const sha = typeof args.sha === "string" && args.sha.trim().length > 0 ? args.sha.trim() : undefined;
 
 	const titleText = theme.fg("accent", "GitHub Run Watch");
 	let metaText: string;
 	if (runId) {
 		metaText = theme.fg("muted", `#${runId}`);
 	} else if (branch) {
-		metaText = theme.fg("text", branch);
+		metaText = theme.fg("text", `branch ${branch}`);
+	} else if (ref) {
+		metaText = theme.fg("text", `ref ${ref}`);
+	} else if (sha) {
+		metaText = theme.fg("text", `sha ${formatShortSha(sha) ?? sha}`);
 	} else {
 		metaText = theme.fg("muted", "current HEAD");
 	}

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { scheduler } from "node:timers/promises";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import {
@@ -895,6 +896,213 @@ describe("github tool", () => {
 		expect(properties.op).toBeDefined();
 		expect(properties.interval).toBeUndefined();
 		expect(properties.grace).toBeUndefined();
+	});
+	it("run_watch resolves an explicit repo branch without reading cwd HEAD", async () => {
+		vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
+		const textSpy = vi.spyOn(git.github, "text").mockResolvedValue("owner/cwd\n");
+		const branchSha = "abc1234567890abc1234567890abc1234567890";
+		const jsonSpy = vi
+			.spyOn(git.github, "json")
+			.mockResolvedValueOnce({ commit: { sha: branchSha } })
+			.mockResolvedValueOnce({
+				workflow_runs: [
+					{
+						id: 88,
+						name: "CI",
+						display_title: "main checks",
+						status: "completed",
+						conclusion: "success",
+						head_branch: "main",
+						head_sha: branchSha,
+						html_url: "https://github.com/owner/target/actions/runs/88",
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				total_count: 1,
+				jobs: [{ id: 301, name: "test", status: "completed", conclusion: "success" }],
+			})
+			.mockResolvedValueOnce({
+				workflow_runs: [
+					{
+						id: 88,
+						name: "CI",
+						display_title: "main checks",
+						status: "completed",
+						conclusion: "success",
+						head_branch: "main",
+						head_sha: branchSha,
+						html_url: "https://github.com/owner/target/actions/runs/88",
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				total_count: 1,
+				jobs: [{ id: 301, name: "test", status: "completed", conclusion: "success" }],
+			});
+		const branchSpy = vi.spyOn(git.branch, "current");
+		const headSpy = vi.spyOn(git.head, "sha");
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		const result = await tool.execute("run-watch", {
+			op: "run_watch",
+			repo: "owner/target",
+			branch: "main",
+		});
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+		expect(textSpy).not.toHaveBeenCalled();
+		expect(branchSpy).not.toHaveBeenCalled();
+		expect(headSpy).not.toHaveBeenCalled();
+		expect(jsonSpy.mock.calls[0]?.[1]).toContain("/repos/owner/target/branches/main");
+		expect(jsonSpy.mock.calls[1]?.[1]).toContain("/repos/owner/target/actions/runs");
+		expect(jsonSpy.mock.calls[1]?.[1]).toContain(`head_sha=${branchSha}`);
+		expect(text).toContain("Repository: owner/target");
+		expect(text).toContain("Selector: branch main");
+		expect(text).toContain(`Commit: ${branchSha}`);
+		expect(text).toContain("Matched runs: #88 CI");
+		expect(result.details?.watch?.selectorKind).toBe("branch");
+		expect(result.details?.watch?.selector).toBe("main");
+	});
+
+	it("run_watch fails fast when explicit repo differs from cwd and no selector is provided", async () => {
+		vi.spyOn(git.github, "text").mockResolvedValue("owner/cwd\n");
+		const jsonSpy = vi.spyOn(git.github, "json");
+		const branchSpy = vi.spyOn(git.branch, "current");
+		const headSpy = vi.spyOn(git.head, "sha");
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		await expect(tool.execute("run-watch", { op: "run_watch", repo: "owner/target" })).rejects.toThrow(
+			"run_watch cannot infer HEAD from cwd because repo differs: repo=owner/target, cwd=owner/cwd. Pass run, branch, ref, or sha.",
+		);
+
+		expect(branchSpy).not.toHaveBeenCalled();
+		expect(headSpy).not.toHaveBeenCalled();
+		expect(jsonSpy).not.toHaveBeenCalled();
+	});
+
+	it("run_watch resolves numeric run ids inside the explicit repo", async () => {
+		const textSpy = vi.spyOn(git.github, "text").mockResolvedValue("owner/cwd\n");
+		const jsonSpy = vi
+			.spyOn(git.github, "json")
+			.mockResolvedValueOnce({
+				id: 77,
+				name: "CI",
+				display_title: "target checks",
+				status: "completed",
+				conclusion: "success",
+				head_branch: "main",
+				head_sha: "def4567890abcdef4567890abcdef4567890abcd",
+				html_url: "https://github.com/owner/target/actions/runs/77",
+			})
+			.mockResolvedValueOnce({ total_count: 0, jobs: [] });
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		const result = await tool.execute("run-watch", { op: "run_watch", repo: "owner/target", run: "77" });
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+		expect(textSpy).not.toHaveBeenCalled();
+		expect(jsonSpy.mock.calls[0]?.[1]).toContain("/repos/owner/target/actions/runs/77");
+		expect(jsonSpy.mock.calls[1]?.[1]).toContain("/repos/owner/target/actions/runs/77/jobs");
+		expect(text).toContain("Repository: owner/target");
+		expect(text).toContain("Selector: run #77");
+	});
+
+	it("run_watch rejects run URLs that disagree with the explicit repo", async () => {
+		const textSpy = vi.spyOn(git.github, "text");
+		const jsonSpy = vi.spyOn(git.github, "json");
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		await expect(
+			tool.execute("run-watch", {
+				op: "run_watch",
+				repo: "owner/target",
+				run: "https://github.com/owner/cwd/actions/runs/77",
+			}),
+		).rejects.toThrow("run URL repository does not match the provided repo");
+
+		expect(textSpy).not.toHaveBeenCalled();
+		expect(jsonSpy).not.toHaveBeenCalled();
+	});
+
+	it("run_watch rejects run combined with commit selectors", async () => {
+		const jsonSpy = vi.spyOn(git.github, "json");
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		await expect(
+			tool.execute("run-watch", { op: "run_watch", repo: "owner/target", run: "77", branch: "main" }),
+		).rejects.toThrow("run_watch accepts only one of run, branch, ref, or sha");
+
+		expect(jsonSpy).not.toHaveBeenCalled();
+	});
+
+	it("run_watch resolves short sha selectors in the explicit repo before polling", async () => {
+		vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
+		const shortSha = "abc1234";
+		const fullSha = "abc1234567890abc1234567890abc1234567890";
+		const jsonSpy = vi
+			.spyOn(git.github, "json")
+			.mockResolvedValueOnce({ sha: fullSha })
+			.mockResolvedValueOnce({
+				workflow_runs: [
+					{
+						id: 89,
+						name: "Release",
+						status: "completed",
+						conclusion: "success",
+						head_sha: fullSha,
+					},
+				],
+			})
+			.mockResolvedValueOnce({ total_count: 0, jobs: [] })
+			.mockResolvedValueOnce({
+				workflow_runs: [
+					{
+						id: 89,
+						name: "Release",
+						status: "completed",
+						conclusion: "success",
+						head_sha: fullSha,
+					},
+				],
+			})
+			.mockResolvedValueOnce({ total_count: 0, jobs: [] });
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		const result = await tool.execute("run-watch", { op: "run_watch", repo: "owner/target", sha: shortSha });
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+		expect(jsonSpy.mock.calls[0]?.[1]).toContain(`/repos/owner/target/commits/${shortSha}`);
+		expect(jsonSpy.mock.calls[1]?.[1]).toContain(`head_sha=${fullSha}`);
+		expect(text).toContain("Selector: sha abc1234");
+		expect(text).toContain(`Commit: ${fullSha}`);
+	});
+
+	it("run_watch times out discovery without changing repositories", async () => {
+		vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
+		const branchSha = "fedcba9876543210fedcba9876543210fedcba98";
+		const jsonSpy = vi
+			.spyOn(git.github, "json")
+			.mockImplementation(async <T>(_cwd: string, args: string[]): Promise<T> => {
+				if (args.includes("/repos/owner/target/branches/main")) {
+					return { commit: { sha: branchSha } } as T;
+				}
+				if (args.includes("/repos/owner/target/actions/runs")) {
+					return { workflow_runs: [] } as T;
+				}
+				throw new Error(`unexpected gh api call: ${args.join(" ")}`);
+			});
+
+		const tool = new GithubTool(createSession("/tmp/cwd-repo"));
+		await expect(
+			tool.execute("run-watch", { op: "run_watch", repo: "owner/target", branch: "main" }),
+		).rejects.toThrow(
+			`Timed out after 60s waiting for workflow runs: repo=owner/target, selector=branch main, sha=${branchSha}.`,
+		);
+
+		expect(
+			jsonSpy.mock.calls.every(call => !call[1].some(arg => typeof arg === "string" && arg.includes("owner/cwd"))),
+		).toBe(true);
 	});
 
 	it("tails failed job logs inline and saves the full failed-job logs as an artifact", async () => {

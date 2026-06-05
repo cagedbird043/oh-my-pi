@@ -195,6 +195,7 @@ const RUN_WATCH_INTERVAL_DEFAULT = 3;
 const RUN_WATCH_GRACE_DEFAULT = 5;
 const RUN_WATCH_TAIL_DEFAULT = 15;
 const RUN_WATCH_TAIL_MAX = 200;
+const RUN_WATCH_DISCOVERY_TIMEOUT_SECONDS = 60;
 const REVIEW_COMMENTS_PAGE_SIZE = 100;
 const RUN_JOBS_PAGE_SIZE = 100;
 const PR_URL_PATTERN = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/.*)?$/;
@@ -256,6 +257,8 @@ const githubSchema = z
 			.optional(),
 		limit: z.number().default(10).describe("max results").optional(),
 		run: z.string().describe("actions run id or url").optional(),
+		ref: z.string().describe("git ref to resolve in the selected repo").optional(),
+		sha: z.string().describe("commit sha to watch").optional(),
 		tail: z.number().default(15).describe("log lines per failed job").optional(),
 	})
 	.strict();
@@ -320,6 +323,8 @@ export interface GhRunWatchFailedLogDetails {
 	available: boolean;
 }
 
+type GhRunWatchSelectorKind = "run" | "branch" | "ref" | "sha" | "current";
+
 export interface GhRunWatchViewDetails {
 	mode: "run" | "commit";
 	state: "watching" | "completed";
@@ -328,6 +333,8 @@ export interface GhRunWatchViewDetails {
 	headSha?: string;
 	pollCount?: number;
 	note?: string;
+	selector?: string;
+	selectorKind?: GhRunWatchSelectorKind;
 	run?: GhRunWatchRunDetails;
 	runs?: GhRunWatchRunDetails[];
 	failedLogs?: GhRunWatchFailedLogDetails[];
@@ -457,6 +464,10 @@ interface GhPrReviewComment {
 	url?: string;
 }
 
+interface GhCommitApiResponse {
+	sha?: string | null;
+}
+
 interface GhBranchApiResponse {
 	commit?: {
 		sha?: string | null;
@@ -529,6 +540,11 @@ interface GhSearchRepoResult {
 	updatedAt?: string;
 	url?: string;
 	visibility?: string | null;
+}
+
+interface GhRunWatchSelector {
+	kind: GhRunWatchSelectorKind;
+	value: string;
 }
 
 interface GhRunReference {
@@ -1400,19 +1416,43 @@ function renderRunSection(run: GhRunSnapshot): string[] {
 	return lines;
 }
 
+function formatRunWatchSelector(selector: GhRunWatchSelector | undefined): string | undefined {
+	if (!selector) return undefined;
+	switch (selector.kind) {
+		case "run":
+			return `run ${selector.value}`;
+		case "branch":
+			return `branch ${selector.value}`;
+		case "ref":
+			return `ref ${selector.value}`;
+		case "sha":
+			return `sha ${selector.value}`;
+		case "current":
+			return "current HEAD";
+	}
+}
+
+function formatMatchedRuns(runs: GhRunSnapshot[]): string | undefined {
+	if (runs.length === 0) return undefined;
+	return runs.map(run => `#${run.id}${run.workflowName ? ` ${run.workflowName}` : ""}`).join(", ");
+}
+
 function formatRunWatchSnapshot(
 	repo: string,
 	run: GhRunSnapshot,
 	pollCount: number,
 	note?: string,
 	includeOutcome: boolean = false,
+	selector?: GhRunWatchSelector,
 ): string {
 	const failedJobs = run.jobs.filter(isFailedJob);
 	const lines: string[] = [`# Watching GitHub Actions Run #${run.id}`, ""];
 	pushLine(lines, "Repository", repo);
+	pushLine(lines, "Selector", formatRunWatchSelector(selector));
 	pushLine(lines, "Workflow", run.workflowName ?? undefined);
 	pushLine(lines, "Title", run.displayTitle ?? undefined);
 	pushLine(lines, "Branch", run.branch ?? undefined);
+	pushLine(lines, "Commit", run.headSha ?? undefined);
 	pushLine(lines, "Status", run.status);
 	pushLine(lines, "Conclusion", run.conclusion ?? undefined);
 	pushLine(lines, "Created", run.createdAt);
@@ -1442,14 +1482,16 @@ function formatRunWatchResult(
 	run: GhRunSnapshot,
 	failedJobLogs: GhFailedJobLog[],
 	tail: number,
-	options?: { mode?: "tail" | "full" },
+	options?: { mode?: "tail" | "full"; selector?: GhRunWatchSelector },
 ): string {
 	const failedJobs = run.jobs.filter(isFailedJob);
 	const lines: string[] = [`# GitHub Actions Run #${run.id}`, ""];
 	pushLine(lines, "Repository", repo);
+	pushLine(lines, "Selector", formatRunWatchSelector(options?.selector));
 	pushLine(lines, "Workflow", run.workflowName ?? undefined);
 	pushLine(lines, "Title", run.displayTitle ?? undefined);
 	pushLine(lines, "Branch", run.branch ?? undefined);
+	pushLine(lines, "Commit", run.headSha ?? undefined);
 	pushLine(lines, "Status", run.status);
 	pushLine(lines, "Conclusion", run.conclusion ?? undefined);
 	pushLine(lines, "Created", run.createdAt);
@@ -1482,13 +1524,16 @@ function formatCommitRunWatchSnapshot(
 	runs: GhRunSnapshot[],
 	pollCount: number,
 	note?: string,
+	selector?: GhRunWatchSelector,
 ): string {
 	const failedJobs = runs.flatMap(run => run.jobs.filter(isFailedJob));
 	const completedRuns = runs.filter(run => run.status === "completed").length;
 	const lines: string[] = [`# Watching GitHub Actions for ${formatShortSha(headSha) ?? headSha}`, ""];
 	pushLine(lines, "Repository", repo);
+	pushLine(lines, "Selector", formatRunWatchSelector(selector));
 	pushLine(lines, "Branch", branch);
 	pushLine(lines, "Commit", headSha);
+	pushLine(lines, "Matched runs", formatMatchedRuns(runs));
 	pushLine(lines, "Poll", pollCount);
 	pushLine(lines, "Runs", runs.length);
 	pushLine(lines, "Completed runs", `${completedRuns}/${runs.length}`);
@@ -1520,13 +1565,15 @@ function formatCommitRunWatchResult(
 	runs: GhRunSnapshot[],
 	failedJobLogs: GhFailedJobLog[],
 	tail: number,
-	options?: { mode?: "tail" | "full" },
+	options?: { mode?: "tail" | "full"; selector?: GhRunWatchSelector },
 ): string {
 	const outcome = getRunCollectionOutcome(runs);
 	const lines: string[] = [`# GitHub Actions for ${formatShortSha(headSha) ?? headSha}`, ""];
 	pushLine(lines, "Repository", repo);
+	pushLine(lines, "Selector", formatRunWatchSelector(options?.selector));
 	pushLine(lines, "Branch", branch);
 	pushLine(lines, "Commit", headSha);
+	pushLine(lines, "Matched runs", formatMatchedRuns(runs));
 	pushLine(lines, "Runs", runs.length);
 
 	for (const run of runs) {
@@ -1572,6 +1619,7 @@ function buildRunWatchDetails(
 		pollCount?: number;
 		note?: string;
 		failedJobLogs?: GhFailedJobLog[];
+		selector?: GhRunWatchSelector;
 	},
 ): GhToolDetails {
 	const observedAtMs = Date.now();
@@ -1585,6 +1633,8 @@ function buildRunWatchDetails(
 			headSha: run.headSha,
 			pollCount: options?.pollCount,
 			note: options?.note,
+			selector: options?.selector?.value,
+			selectorKind: options?.selector?.kind,
 			run: buildRunWatchRunDetails(run, observedAtMs),
 			failedLogs: buildFailedLogDetails(options?.failedJobLogs ?? []),
 		},
@@ -1621,6 +1671,7 @@ function buildCommitRunWatchDetails(
 		pollCount?: number;
 		note?: string;
 		failedJobLogs?: GhFailedJobLog[];
+		selector?: GhRunWatchSelector;
 	},
 ): GhToolDetails {
 	const observedAtMs = Date.now();
@@ -1634,6 +1685,8 @@ function buildCommitRunWatchDetails(
 			headSha,
 			pollCount: options?.pollCount,
 			note: options?.note,
+			selector: options?.selector?.value,
+			selectorKind: options?.selector?.kind,
 			runs: runs.map(run => buildRunWatchRunDetails(run, observedAtMs)),
 			failedLogs: buildFailedLogDetails(options?.failedJobLogs ?? []),
 		},
@@ -1710,6 +1763,93 @@ export async function resolveDefaultRepoMemoized(cwd: string, signal?: AbortSign
 		DEFAULT_REPO_INFLIGHT.set(key, pending);
 	}
 	return untilAborted(signal, pending);
+}
+
+async function resolveGitHubRefHead(cwd: string, repo: string, ref: string, signal?: AbortSignal): Promise<string> {
+	const response = await git.github.json<GhCommitApiResponse>(
+		cwd,
+		["api", "--method", "GET", `/repos/${repo}/commits/${encodeURIComponent(ref)}`],
+		signal,
+		{ repoProvided: true },
+	);
+	return requireNonEmpty(response.sha, `head SHA for ref ${ref}`);
+}
+
+async function resolveCwdRepo(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
+	try {
+		return await resolveDefaultRepoMemoized(cwd, signal);
+	} catch {
+		return undefined;
+	}
+}
+
+function requireShaInput(sha: string): string {
+	if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+		throw new ToolError("sha must be a 7-40 character hexadecimal commit SHA");
+	}
+	return sha;
+}
+
+async function resolveRunWatchCommitSelector(
+	cwd: string,
+	repo: string,
+	explicitRepo: string | undefined,
+	branchInput: string | undefined,
+	refInput: string | undefined,
+	shaInput: string | undefined,
+	signal?: AbortSignal,
+): Promise<{ branch?: string; headSha: string; selector: GhRunWatchSelector }> {
+	if (shaInput) {
+		const sha = requireShaInput(shaInput);
+		if (sha.length === 40) {
+			return { headSha: sha, selector: { kind: "sha", value: shaInput } };
+		}
+		return {
+			headSha: await resolveGitHubRefHead(cwd, repo, sha, signal),
+			selector: { kind: "sha", value: shaInput },
+		};
+	}
+
+	if (refInput) {
+		return {
+			headSha: await resolveGitHubRefHead(cwd, repo, refInput, signal),
+			selector: { kind: "ref", value: refInput },
+		};
+	}
+
+	if (branchInput) {
+		return {
+			branch: branchInput,
+			headSha: await resolveGitHubBranchHead(cwd, repo, branchInput, signal),
+			selector: { kind: "branch", value: branchInput },
+		};
+	}
+
+	const cwdRepo = await resolveCwdRepo(cwd, signal);
+	if (explicitRepo && cwdRepo && explicitRepo !== cwdRepo) {
+		throw new ToolError(
+			`run_watch cannot infer HEAD from cwd because repo differs: repo=${explicitRepo}, cwd=${cwdRepo}. Pass run, branch, ref, or sha.`,
+		);
+	}
+
+	if (explicitRepo && !cwdRepo) {
+		throw new ToolError(
+			`run_watch cannot infer HEAD from cwd because repo=${explicitRepo} was provided and cwd repository is unavailable. Pass run, branch, ref, or sha.`,
+		);
+	}
+
+	const branch = await requireCurrentGitBranch(cwd, signal);
+	return {
+		branch,
+		headSha: await requireCurrentGitHead(cwd, signal),
+		selector: { kind: "current", value: "HEAD" },
+	};
+}
+
+function buildNoRunsDiscoveryTimeoutError(repo: string, selector: GhRunWatchSelector, headSha: string): ToolError {
+	return new ToolError(
+		`Timed out after ${RUN_WATCH_DISCOVERY_TIMEOUT_SECONDS}s waiting for workflow runs: repo=${repo}, selector=${formatRunWatchSelector(selector)}, sha=${headSha}.`,
+	);
 }
 
 /**
@@ -3337,14 +3477,22 @@ async function executeRunWatch(
 	signal: AbortSignal | undefined,
 	onUpdate: AgentToolUpdateCallback<GhToolDetails> | undefined,
 ): Promise<AgentToolResult<GhToolDetails>> {
+	const explicitRepo = normalizeOptionalString(params.repo);
 	const branchInput = normalizeOptionalString(params.branch);
+	const refInput = normalizeOptionalString(params.ref);
+	const shaInput = normalizeOptionalString(params.sha);
 	const runReference = parseRunReference(params.run);
-	const repo = await resolveGitHubRepo(session.cwd, undefined, runReference.repo, signal);
+	const commitSelectorCount = [branchInput, refInput, shaInput].filter(Boolean).length;
+	if (commitSelectorCount > 1 || (runReference.runId !== undefined && commitSelectorCount > 0)) {
+		throw new ToolError("run_watch accepts only one of run, branch, ref, or sha");
+	}
+	const repo = await resolveGitHubRepo(session.cwd, explicitRepo, runReference.repo, signal);
 	const intervalSeconds = RUN_WATCH_INTERVAL_DEFAULT;
 	const graceSeconds = RUN_WATCH_GRACE_DEFAULT;
 	const tail = resolveTailLimit(params.tail);
 	if (runReference.runId !== undefined) {
 		const runId = runReference.runId;
+		const selector: GhRunWatchSelector = { kind: "run", value: `#${runId}` };
 		let pollCount = 0;
 
 		while (true) {
@@ -3355,9 +3503,10 @@ async function executeRunWatch(
 			const details = buildRunWatchDetails(repo, run, {
 				state: "watching",
 				pollCount,
+				selector,
 			});
 			onUpdate?.({
-				content: [{ type: "text", text: formatRunWatchSnapshot(repo, run, pollCount) }],
+				content: [{ type: "text", text: formatRunWatchSnapshot(repo, run, pollCount, undefined, false, selector) }],
 				details,
 			});
 
@@ -3371,13 +3520,14 @@ async function executeRunWatch(
 						content: [
 							{
 								type: "text",
-								text: formatRunWatchSnapshot(repo, run, pollCount, note),
+								text: formatRunWatchSnapshot(repo, run, pollCount, note, false, selector),
 							},
 						],
 						details: buildRunWatchDetails(repo, run, {
 							state: "watching",
 							pollCount,
 							note,
+							selector,
 						}),
 					});
 					await scheduler.wait(graceSeconds * 1000, { signal });
@@ -3394,14 +3544,15 @@ async function executeRunWatch(
 				const finalDetails = buildRunWatchDetails(repo, run, {
 					state: "completed",
 					failedJobLogs,
+					selector,
 				});
 				const artifactId = await saveArtifactText(
 					session,
 					toolName,
-					formatRunWatchResult(repo, run, failedJobLogs, tail, { mode: "full" }),
+					formatRunWatchResult(repo, run, failedJobLogs, tail, { mode: "full", selector }),
 				);
 				return buildTextResult(
-					formatRunWatchResult(repo, run, failedJobLogs, tail),
+					formatRunWatchResult(repo, run, failedJobLogs, tail, { selector }),
 					run.url,
 					{ ...finalDetails, artifactId },
 					{ artifactId, artifactLabel: "Full failed-job logs" },
@@ -3411,19 +3562,26 @@ async function executeRunWatch(
 			if (runCompleted) {
 				const finalDetails = buildRunWatchDetails(repo, run, {
 					state: "completed",
+					selector,
 				});
-				return buildTextResult(formatRunWatchResult(repo, run, [], tail), run.url, finalDetails);
+				return buildTextResult(formatRunWatchResult(repo, run, [], tail, { selector }), run.url, finalDetails);
 			}
 
 			await scheduler.wait(intervalSeconds * 1000, { signal });
 		}
 	}
 
-	const branch = branchInput ?? (await requireCurrentGitBranch(session.cwd, signal));
-	const headSha = branchInput
-		? await resolveGitHubBranchHead(session.cwd, repo, branch, signal)
-		: await requireCurrentGitHead(session.cwd, signal);
+	const { branch, headSha, selector } = await resolveRunWatchCommitSelector(
+		session.cwd,
+		repo,
+		explicitRepo,
+		branchInput,
+		refInput,
+		shaInput,
+		signal,
+	);
 	let pollCount = 0;
+	let emptyPolls = 0;
 	let settledSuccessSignature: string | undefined;
 
 	while (true) {
@@ -3434,11 +3592,26 @@ async function executeRunWatch(
 		const details = buildCommitRunWatchDetails(repo, headSha, branch, runs, {
 			state: "watching",
 			pollCount,
+			selector,
 		});
 		onUpdate?.({
-			content: [{ type: "text", text: formatCommitRunWatchSnapshot(repo, headSha, branch, runs, pollCount) }],
+			content: [
+				{
+					type: "text",
+					text: formatCommitRunWatchSnapshot(repo, headSha, branch, runs, pollCount, undefined, selector),
+				},
+			],
 			details,
 		});
+
+		if (runs.length === 0) {
+			emptyPolls += 1;
+			if ((emptyPolls - 1) * intervalSeconds >= RUN_WATCH_DISCOVERY_TIMEOUT_SECONDS) {
+				throw buildNoRunsDiscoveryTimeoutError(repo, selector, headSha);
+			}
+		} else {
+			emptyPolls = 0;
+		}
 
 		const outcome = getRunCollectionOutcome(runs);
 		if (outcome === "failure") {
@@ -3448,13 +3621,14 @@ async function executeRunWatch(
 					content: [
 						{
 							type: "text",
-							text: formatCommitRunWatchSnapshot(repo, headSha, branch, runs, pollCount, note),
+							text: formatCommitRunWatchSnapshot(repo, headSha, branch, runs, pollCount, note, selector),
 						},
 					],
 					details: buildCommitRunWatchDetails(repo, headSha, branch, runs, {
 						state: "watching",
 						pollCount,
 						note,
+						selector,
 					}),
 				});
 				await scheduler.wait(graceSeconds * 1000, { signal });
@@ -3471,14 +3645,15 @@ async function executeRunWatch(
 			const finalDetails = buildCommitRunWatchDetails(repo, headSha, branch, runs, {
 				state: "completed",
 				failedJobLogs,
+				selector,
 			});
 			const artifactId = await saveArtifactText(
 				session,
 				toolName,
-				formatCommitRunWatchResult(repo, headSha, branch, runs, failedJobLogs, tail, { mode: "full" }),
+				formatCommitRunWatchResult(repo, headSha, branch, runs, failedJobLogs, tail, { mode: "full", selector }),
 			);
 			return buildTextResult(
-				formatCommitRunWatchResult(repo, headSha, branch, runs, failedJobLogs, tail),
+				formatCommitRunWatchResult(repo, headSha, branch, runs, failedJobLogs, tail, { selector }),
 				undefined,
 				{ ...finalDetails, artifactId },
 				{ artifactId, artifactLabel: "Full failed-job logs" },
@@ -3490,9 +3665,10 @@ async function executeRunWatch(
 			if (signature === settledSuccessSignature) {
 				const finalDetails = buildCommitRunWatchDetails(repo, headSha, branch, runs, {
 					state: "completed",
+					selector,
 				});
 				return buildTextResult(
-					formatCommitRunWatchResult(repo, headSha, branch, runs, [], tail),
+					formatCommitRunWatchResult(repo, headSha, branch, runs, [], tail, { selector }),
 					undefined,
 					finalDetails,
 				);
@@ -3504,13 +3680,14 @@ async function executeRunWatch(
 				content: [
 					{
 						type: "text",
-						text: formatCommitRunWatchSnapshot(repo, headSha, branch, runs, pollCount, note),
+						text: formatCommitRunWatchSnapshot(repo, headSha, branch, runs, pollCount, note, selector),
 					},
 				],
 				details: buildCommitRunWatchDetails(repo, headSha, branch, runs, {
 					state: "watching",
 					pollCount,
 					note,
+					selector,
 				}),
 			});
 			await scheduler.wait(intervalSeconds * 1000, { signal });

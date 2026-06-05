@@ -3,6 +3,8 @@
 ## [Unreleased]
 ### Fixed
 
+- Fixed `github` `run_watch` to honor explicit `repo` in nested or umbrella workspaces, keep all run/branch/ref/sha lookups scoped to the resolved repository, and fail fast instead of inferring cwd HEAD for a different repo.
+
 - Fixed chat transcript updates after submitting input so frozen scrollback is only thawed when native scrollback replay succeeds, preventing misplaced or duplicated rows when the viewport is not at the tail
 - Fixed `read` of `.zip` archives to list the central directory without inflating every member, so large or corrupt zip payloads no longer freeze directory reads; member contents are inflated only when a specific entry is read.
 
