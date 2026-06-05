@@ -981,6 +981,52 @@ describe("github tool", () => {
 		expect(jsonSpy).not.toHaveBeenCalled();
 	});
 
+	it("run_watch allows cwd HEAD inference when explicit repo only differs by case", async () => {
+		vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
+		const headSha = "abc1234567890abc1234567890abc1234567890";
+		const textSpy = vi.spyOn(git.github, "text").mockResolvedValue("Owner/Repo\n");
+		vi.spyOn(git.branch, "current").mockResolvedValue("main");
+		vi.spyOn(git.head, "sha").mockResolvedValue(headSha);
+		const jsonSpy = vi
+			.spyOn(git.github, "json")
+			.mockResolvedValueOnce({
+				workflow_runs: [
+					{
+						id: 90,
+						name: "CI",
+						status: "completed",
+						conclusion: "success",
+						head_branch: "main",
+						head_sha: headSha,
+					},
+				],
+			})
+			.mockResolvedValueOnce({ total_count: 0, jobs: [] })
+			.mockResolvedValueOnce({
+				workflow_runs: [
+					{
+						id: 90,
+						name: "CI",
+						status: "completed",
+						conclusion: "success",
+						head_branch: "main",
+						head_sha: headSha,
+					},
+				],
+			})
+			.mockResolvedValueOnce({ total_count: 0, jobs: [] });
+
+		const tool = new GithubTool(createSession("/tmp/case-cwd-repo"));
+		const result = await tool.execute("run-watch", { op: "run_watch", repo: "owner/repo" });
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+
+		expect(textSpy).toHaveBeenCalledTimes(1);
+		expect(jsonSpy.mock.calls[0]?.[1]).toContain("/repos/owner/repo/actions/runs");
+		expect(text).toContain("Repository: owner/repo");
+		expect(text).toContain("Selector: current HEAD");
+		expect(text).toContain(`Commit: ${headSha}`);
+	});
+
 	it("run_watch resolves numeric run ids inside the explicit repo", async () => {
 		const textSpy = vi.spyOn(git.github, "text").mockResolvedValue("owner/cwd\n");
 		const jsonSpy = vi

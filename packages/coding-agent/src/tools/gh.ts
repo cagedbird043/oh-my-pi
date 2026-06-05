@@ -1693,13 +1693,21 @@ function buildCommitRunWatchDetails(
 	};
 }
 
+function githubRepoKey(repo: string): string {
+	return repo.toLowerCase();
+}
+
+function githubReposEqual(left: string, right: string): boolean {
+	return githubRepoKey(left) === githubRepoKey(right);
+}
+
 async function resolveGitHubRepo(
 	cwd: string,
 	repo: string | undefined,
 	runRepo: string | undefined,
 	signal?: AbortSignal,
 ): Promise<string> {
-	if (repo && runRepo && repo !== runRepo) {
+	if (repo && runRepo && !githubReposEqual(repo, runRepo)) {
 		throw new ToolError("run URL repository does not match the provided repo");
 	}
 
@@ -1826,7 +1834,7 @@ async function resolveRunWatchCommitSelector(
 	}
 
 	const cwdRepo = await resolveCwdRepo(cwd, signal);
-	if (explicitRepo && cwdRepo && explicitRepo !== cwdRepo) {
+	if (explicitRepo && cwdRepo && !githubReposEqual(explicitRepo, cwdRepo)) {
 		throw new ToolError(
 			`run_watch cannot infer HEAD from cwd because repo differs: repo=${explicitRepo}, cwd=${cwdRepo}. Pass run, branch, ref, or sha.`,
 		);

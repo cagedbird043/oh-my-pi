@@ -66,6 +66,10 @@ function extractIssueId(value: string | undefined): string | undefined {
 	return truncateVisualWidth(trimmed, TRUNCATE_LENGTHS.SHORT);
 }
 
+function formatPendingSelectorLabel(label: string, value: string): string {
+	return `${label} ${truncateVisualWidth(replaceTabs(value), TRUNCATE_LENGTHS.SHORT)}`;
+}
+
 function formatPrIdentifier(pr: string | string[] | undefined): string | undefined {
 	if (pr === undefined) return undefined;
 	if (Array.isArray(pr)) {
@@ -412,11 +416,11 @@ function renderWatchCall(args: GithubToolRenderArgs, options: RenderResultOption
 	if (runId) {
 		metaText = theme.fg("muted", `#${runId}`);
 	} else if (branch) {
-		metaText = theme.fg("text", `branch ${branch}`);
+		metaText = theme.fg("text", formatPendingSelectorLabel("branch", branch));
 	} else if (ref) {
-		metaText = theme.fg("text", `ref ${ref}`);
+		metaText = theme.fg("text", formatPendingSelectorLabel("ref", ref));
 	} else if (sha) {
-		metaText = theme.fg("text", `sha ${formatShortSha(sha) ?? sha}`);
+		metaText = theme.fg("text", formatPendingSelectorLabel("sha", formatShortSha(sha) ?? sha));
 	} else {
 		metaText = theme.fg("muted", "current HEAD");
 	}
