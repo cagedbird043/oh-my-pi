@@ -229,6 +229,42 @@ describe("Google Gemini CLI alignment", () => {
 			expect(parts.slice(3).some(p => p.text === "my instructions")).toBe(true);
 		}
 	});
+	it("omits toolConfig when toolChoice is 'auto' in buildRequest", () => {
+		const model = createModel("google-gemini-cli");
+		const toolContext: Context = {
+			systemPrompt: ["You are a helpful assistant."],
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			tools: [{ name: "search", description: "Search", parameters: { type: "object", properties: {} } as never }],
+		};
+		const payload = buildRequest(model, toolContext, "proj-123", { toolChoice: "auto" }, false) as {
+			request: { toolConfig?: unknown };
+		};
+		expect(payload.request.toolConfig).toBeUndefined();
+	});
+
+	it("keeps toolConfig when toolChoice is 'none' or 'any' in buildRequest", () => {
+		const model = createModel("google-gemini-cli");
+		const toolContext: Context = {
+			systemPrompt: ["You are a helpful assistant."],
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			tools: [{ name: "search", description: "Search", parameters: { type: "object", properties: {} } as never }],
+		};
+
+		const payloadNone = buildRequest(model, toolContext, "proj-123", { toolChoice: "none" }, false) as {
+			request: { toolConfig?: unknown };
+		};
+		expect(payloadNone.request.toolConfig).toEqual({
+			functionCallingConfig: { mode: "NONE" },
+		});
+
+		const payloadAny = buildRequest(model, toolContext, "proj-123", { toolChoice: "any" }, false) as {
+			request: { toolConfig?: unknown };
+		};
+		expect(payloadAny.request.toolConfig).toEqual({
+			functionCallingConfig: { mode: "ANY" },
+		});
+	});
+
 	it("adds anthropic-beta for Antigravity Claude reasoning models without relying on id suffix", async () => {
 		let requestHeaders: Headers | undefined;
 		const fetchMock: FetchImpl = async (_url, init) => {
