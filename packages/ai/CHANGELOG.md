@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Google Gemini/Antigravity (Cloud Code Assist) provider explicitly serializing `toolConfig.functionCallingConfig.mode: "AUTO"` in the API payload, which triggers a Gemini-3 upstream bug where the model outputs raw reasoning/call JSON instead of executing tool calls. Omitting `toolConfig` on `AUTO` mode falls back to the API's native default, bypassing the bug without altering tool choice semantics. ([#2776](https://github.com/can1357/oh-my-pi/issues/2776))
+
 ## [16.0.1] - 2026-06-15
 
 ### Added
