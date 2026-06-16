@@ -76,6 +76,14 @@ describe("buildGoogleGenerateContentParams toolConfig serialization (F7)", () =>
 		});
 	});
 
+	it("omits toolConfig when toolChoice is 'auto'", () => {
+		const params = buildGoogleGenerateContentParams(model, ctx(), {
+			apiKey: "fake",
+			toolChoice: "auto",
+		});
+		expect(params.config!.toolConfig).toBeUndefined();
+	});
+
 	it("clears toolConfig when no toolChoice is provided", () => {
 		const params = buildGoogleGenerateContentParams(model, ctx(), { apiKey: "fake" });
 		expect(params.config!.toolConfig).toBeUndefined();
