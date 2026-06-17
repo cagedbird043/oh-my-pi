@@ -43,11 +43,19 @@ export interface LocalRelay {
 	stop(): void;
 }
 
-export function startLocalRelay(port = 0): LocalRelay {
+export function startLocalRelay(port = 0, tls?: { key?: string; cert?: string }): LocalRelay {
 	const rooms = new Map<string, Room>();
 
 	const server = Bun.serve({
 		port,
+		...(tls?.key && tls?.cert
+			? {
+					tls: {
+						key: Bun.file(tls.key),
+						cert: Bun.file(tls.cert),
+					},
+				}
+			: {}),
 		fetch(req, srv): Response | undefined {
 			const url = new URL(req.url);
 			const match = ROOM_PATH_RE.exec(url.pathname);
@@ -121,8 +129,9 @@ export function startLocalRelay(port = 0): LocalRelay {
 		},
 	});
 
+	const isTls = !!(tls?.key && tls?.cert);
 	return {
-		url: `ws://localhost:${server.port}`,
+		url: `${isTls ? "wss" : "ws"}://localhost:${server.port}`,
 		stop(): void {
 			for (const room of rooms.values()) {
 				const closure = JSON.stringify({ t: "room-closed" });
@@ -137,24 +146,34 @@ export function startLocalRelay(port = 0): LocalRelay {
 		},
 	};
 }
-function parsePort(argv: readonly string[]): number {
-	let raw: string | undefined;
+function parseArgs(argv: readonly string[]): {
+	port: number;
+	tlsKey?: string;
+	tlsCert?: string;
+} {
+	let rawPort: string | undefined;
+	let tlsKey: string | undefined;
+	let tlsCert: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i]!;
-		if (arg === "--port") raw = argv[i + 1];
-		else if (arg.startsWith("--port=")) raw = arg.slice("--port=".length);
+		if (arg === "--port") rawPort = argv[i + 1];
+		else if (arg.startsWith("--port=")) rawPort = arg.slice("--port=".length);
+		else if (arg === "--tls-key") tlsKey = argv[i + 1];
+		else if (arg.startsWith("--tls-key=")) tlsKey = arg.slice("--tls-key=".length);
+		else if (arg === "--tls-cert") tlsCert = argv[i + 1];
+		else if (arg.startsWith("--tls-cert=")) tlsCert = arg.slice("--tls-cert=".length);
 	}
-	if (raw === undefined) return DEFAULT_PORT;
-	const port = Number(raw);
+	const port = rawPort === undefined ? DEFAULT_PORT : Number(rawPort);
 	if (!Number.isInteger(port) || port < 0 || port > 65_535) {
-		console.error(`local-relay: invalid --port ${raw}`);
+		console.error(`local-relay: invalid --port ${rawPort}`);
 		process.exit(1);
 	}
-	return port;
+	return { port, tlsKey, tlsCert };
 }
 
 if (import.meta.main) {
-	const relay = startLocalRelay(parsePort(Bun.argv.slice(2)));
+	const config = parseArgs(Bun.argv.slice(2));
+	const relay = startLocalRelay(config.port, { key: config.tlsKey, cert: config.tlsCert });
 	let stopping = false;
 	const shutdown = (): void => {
 		if (stopping) return;
