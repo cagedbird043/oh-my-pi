@@ -56,16 +56,28 @@ export function startLocalRelay(port = 0, tls?: { key?: string; cert?: string })
 					},
 				}
 			: {}),
-		fetch(req, srv): Response | undefined {
+		fetch(req, srv): Response | Promise<Response> | undefined {
 			const url = new URL(req.url);
 			const match = ROOM_PATH_RE.exec(url.pathname);
 			const role = url.searchParams.get("role");
-			if (!match || (role !== "host" && role !== "guest")) {
-				return new Response("not found", { status: 404 });
+			if (match && (role === "host" || role === "guest")) {
+				const data: SocketData = { roomId: match[1]!, role, peerId: 0 };
+				if (srv.upgrade(req, { data })) return undefined;
+				return new Response("websocket upgrade required", { status: 426 });
 			}
-			const data: SocketData = { roomId: match[1]!, role, peerId: 0 };
-			if (srv.upgrade(req, { data })) return undefined;
-			return new Response("websocket upgrade required", { status: 426 });
+
+			// Serve static files from the build output directory
+			const distDir = `${import.meta.dir}/../dist`;
+			let filePath = url.pathname;
+			if (filePath === "/" || filePath === "") filePath = "/index.html";
+
+			const file = Bun.file(`${distDir}${filePath}`);
+			return file.exists().then(exists => {
+				if (exists) {
+					return new Response(file);
+				}
+				return new Response("not found", { status: 404 });
+			});
 		},
 		websocket: {
 			open(ws: RelaySocket): void {
