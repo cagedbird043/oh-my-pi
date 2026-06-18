@@ -7,6 +7,10 @@
 ### Added
 
 - Added support for collab browser wrapper links whose web UI host differs from the relay host, so the connect screen joins the relay encoded in the URL fragment.
+### Added
+
+- Added support for `--tls-key` and `--tls-cert` arguments in the local relay to run WSS natively, with pair validation.
+- Added automatic static file serving from `collab-web/dist` in the local relay, with SPA fallback for `/r/<roomId>` browser deep links.
 
 ## [16.0.5] - 2026-06-17
 

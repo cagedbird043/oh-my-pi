@@ -177,4 +177,50 @@ describe("local collab relay", () => {
 		expect(JSON.parse(await closure)).toEqual({ t: "room-closed" });
 		expect((await guestClose).code).toBe(4001);
 	});
+
+	it("validates TLS argument pairs", () => {
+		expect(() => startLocalRelay(0, { key: "key.pem" })).toThrow();
+		expect(() => startLocalRelay(0, { cert: "cert.pem" })).toThrow();
+		try {
+			const tempRelay = startLocalRelay(0, { key: "key.pem", cert: "cert.pem" });
+			expect(tempRelay.url).toStartWith("wss://");
+			tempRelay.stop();
+		} catch (e: any) {
+			expect(e.message).not.toContain("both key and cert must be provided");
+		}
+	});
+
+	it("serves static assets and fallback SPA room pages", async () => {
+		relay = startLocalRelay();
+
+		const distDir = `${import.meta.dir}/../dist`;
+		const fs = require("fs");
+		const path = require("path");
+		if (!fs.existsSync(distDir)) {
+			fs.mkdirSync(distDir, { recursive: true });
+		}
+		fs.writeFileSync(path.join(distDir, "index.html"), "<html>mock index</html>");
+		fs.writeFileSync(path.join(distDir, "dummy.js"), "console.log(1)");
+
+		try {
+			// 1. Root serves index.html
+			const rootRes = await fetch(`${relayHttpUrl()}/`);
+			expect(rootRes.status).toBe(200);
+			expect(await rootRes.text()).toBe("<html>mock index</html>");
+
+			// 2. Existing asset file serves
+			const assetRes = await fetch(`${relayHttpUrl()}/dummy.js`);
+			expect(assetRes.status).toBe(200);
+			expect(await assetRes.text()).toBe("console.log(1)");
+
+			// 3. /r/<roomId> serves fallback index.html
+			const roomRes = await fetch(`${relayHttpUrl()}/r/${ROOM}`);
+			expect(roomRes.status).toBe(200);
+			expect(await roomRes.text()).toBe("<html>mock index</html>");
+		} finally {
+			try {
+				fs.unlinkSync(path.join(distDir, "dummy.js"));
+			} catch {}
+		}
+	});
 });

@@ -44,8 +44,10 @@ export interface LocalRelay {
 }
 
 export function startLocalRelay(port = 0, tls?: { key?: string; cert?: string }): LocalRelay {
+	if (tls && (tls.key === undefined) !== (tls.cert === undefined)) {
+		throw new Error("local-relay: both key and cert must be provided to enable TLS");
+	}
 	const rooms = new Map<string, Room>();
-
 	const server = Bun.serve({
 		port,
 		...(tls?.key && tls?.cert
@@ -69,8 +71,12 @@ export function startLocalRelay(port = 0, tls?: { key?: string; cert?: string })
 			// Serve static files from the build output directory
 			const distDir = `${import.meta.dir}/../dist`;
 			let filePath = url.pathname;
-			if (filePath === "/" || filePath === "") filePath = "/index.html";
-
+			if (filePath === "/" || filePath === "") {
+				filePath = "/index.html";
+			} else if (ROOM_PATH_RE.test(filePath) && !role) {
+				// Fallback to index.html for browser opens of collab links requested via HTTP (without WebSocket role parameter)
+				filePath = "/index.html";
+			}
 			const file = Bun.file(`${distDir}${filePath}`);
 			return file.exists().then(exists => {
 				if (exists) {
@@ -174,6 +180,10 @@ function parseArgs(argv: readonly string[]): {
 		else if (arg.startsWith("--tls-key=")) tlsKey = arg.slice("--tls-key=".length);
 		else if (arg === "--tls-cert") tlsCert = argv[i + 1];
 		else if (arg.startsWith("--tls-cert=")) tlsCert = arg.slice("--tls-cert=".length);
+	}
+	if ((tlsKey === undefined) !== (tlsCert === undefined)) {
+		console.error("local-relay: both --tls-key and --tls-cert must be provided to enable TLS");
+		process.exit(1);
 	}
 	const port = rawPort === undefined ? DEFAULT_PORT : Number(rawPort);
 	if (!Number.isInteger(port) || port < 0 || port > 65_535) {
