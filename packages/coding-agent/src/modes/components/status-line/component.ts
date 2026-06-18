@@ -407,26 +407,17 @@ export class StatusLineComponent implements Component {
 			this.#cachedBranch = null;
 			if (!this.#vcsLabelInFlight) {
 				this.#vcsLabelInFlight = true;
-				const currentGeneration = this.#vcsLabelGeneration;
 				void jj
 					.workingCopy(projectDir)
 					.then(workingCopy => {
 						if (this.#disposed) return;
-						if (
-							this.#cachedVcsKind === "jj" &&
-							this.#cachedBranchRepoId === repoId &&
-							currentGeneration === this.#vcsLabelGeneration
-						) {
+						if (this.#cachedVcsKind === "jj" && this.#cachedBranchRepoId === repoId) {
 							this.#cachedBranch = this.#formatJjLabel(workingCopy);
 						}
 					})
 					.catch(() => {
 						if (this.#disposed) return;
-						if (
-							this.#cachedVcsKind === "jj" &&
-							this.#cachedBranchRepoId === repoId &&
-							currentGeneration === this.#vcsLabelGeneration
-						) {
+						if (this.#cachedVcsKind === "jj" && this.#cachedBranchRepoId === repoId) {
 							this.#cachedBranch = null;
 						}
 					})
@@ -849,6 +840,14 @@ export class StatusLineComponent implements Component {
 
 	#buildStatusLine(width: number): string {
 		const effectiveSettings = this.#resolveSettings();
+		const projectDir = getProjectDir();
+		const jjRepo = jj.available() ? jj.resolveSync(projectDir) : null;
+		fs.writeFileSync("/tmp/debug-jj.json", JSON.stringify({
+			available: jj.available(),
+			projectDir,
+			jjRepo: jjRepo ? { jjDir: jjRepo.jjDir, repoRoot: jjRepo.repoRoot, workingCopyPath: jjRepo.workingCopyPath } : null,
+			vcs: this.#getCurrentVcs(),
+		}, null, 2));
 		const includeContext =
 			hasContextSegment(effectiveSettings.leftSegments) || hasContextSegment(effectiveSettings.rightSegments);
 		const gitEnabled = this.#gitEnabled();
