@@ -494,6 +494,9 @@ export class StatusLineComponent implements Component {
 			} finally {
 				this.#gitStatusLastFetch = Date.now();
 				this.#gitStatusInFlight = false;
+				if (!this.#disposed && this.#onBranchChange) {
+					this.#onBranchChange();
+				}
 			}
 		})();
 
