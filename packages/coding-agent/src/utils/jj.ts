@@ -1,4 +1,4 @@
-import * as fs from "node:fs/promises";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { $which } from "@oh-my-pi/pi-utils";
 import { LRUCache } from "lru-cache/raw";
@@ -152,7 +152,7 @@ async function hasJjWorkspaceMetadata(dir: string): Promise<boolean> {
 	// of the default workspace. Either form is a real workspace, so match on
 	// `.jj/repo` presence rather than the inner `store/` directory.
 	try {
-		await fs.stat(path.join(dir, ".jj", "repo"));
+		await fs.promises.stat(path.join(dir, ".jj", "repo"));
 		return true;
 	} catch {
 		return false;
@@ -189,8 +189,8 @@ async function findWorkspaceRoot(cwd: string): Promise<string | undefined> {
 async function resolveRepoDir(root: string): Promise<string> {
 	const jjDir = path.join(root, ".jj");
 	const repoPath = path.join(jjDir, "repo");
-	if ((await fs.stat(repoPath)).isFile()) {
-		const target = (await fs.readFile(repoPath, "utf8")).trim();
+	if ((await fs.promises.stat(repoPath)).isFile()) {
+		const target = (await fs.promises.readFile(repoPath, "utf8")).trim();
 		return path.resolve(jjDir, target);
 	}
 	return repoPath;
@@ -246,3 +246,131 @@ export const repo = {
 		return (await repo.root(cwd)) !== null;
 	},
 };
+
+export interface JjStatusSummary {
+	staged: number;
+	unstaged: number;
+	untracked: number;
+}
+
+export interface JjWorkingCopy {
+	bookmarks: string[];
+	changeId: string;
+	commitId: string;
+	description: string;
+}
+
+export interface JjRepositorySync {
+	jjDir: string;
+	repoRoot: string;
+	workingCopyPath: string;
+}
+
+export function available(): boolean {
+	return $which("jj") !== null;
+}
+
+export function resolveSync(cwd: string): JjRepositorySync | null {
+	let dir = path.resolve(cwd);
+	while (true) {
+		const jjDir = path.join(dir, ".jj");
+		if (fs.existsSync(jjDir)) {
+			return {
+				jjDir,
+				repoRoot: dir,
+				workingCopyPath: path.join(jjDir, "working_copy", "checkout"),
+			};
+		}
+		if (fs.existsSync(path.join(dir, ".git"))) return null;
+		const parent = path.dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
+}
+
+export function parseStatus(text: string): JjStatusSummary {
+	let unstaged = 0;
+	let untracked = 0;
+	let section: "changes" | "untracked" | null = null;
+	for (const rawLine of text.split("\n")) {
+		const line = rawLine.trimEnd();
+		if (!line) continue;
+		if (line === "Working copy changes:") {
+			section = "changes";
+			continue;
+		}
+		if (line === "Untracked paths:") {
+			section = "untracked";
+			continue;
+		}
+		if (line === "The working copy is clean") {
+			section = null;
+			continue;
+		}
+		if (line.startsWith("Working copy ") || line.startsWith("Parent commit ")) {
+			section = null;
+			continue;
+		}
+		if (section === "changes") {
+			if (line.startsWith("? ")) untracked += 1;
+			else unstaged += 1;
+		} else if (section === "untracked" && line.startsWith("? ")) {
+			untracked += 1;
+		}
+	}
+	return { staged: 0, unstaged, untracked };
+}
+
+export function parseWorkingCopy(text: string): JjWorkingCopy | null {
+	const [changeId = "", commitId = "", description = "", bookmarksRaw = ""] = text.trimEnd().split("\n");
+	if (!changeId) return null;
+	const bookmarks = bookmarksRaw
+		.split(" ")
+		.filter(Boolean)
+		.map(b => b.replace(/[*@].*$/, "")); // Strip suffix like * or @origin
+	return {
+		bookmarks,
+		changeId,
+		commitId,
+		description,
+	};
+}
+
+export const status = {
+	async summary(cwd: string, signal?: AbortSignal): Promise<JjStatusSummary | null> {
+		try {
+			const result = await jj(cwd, ["status", "--color", "never"], { signal });
+			if (result.exitCode !== 0) {
+				return null;
+			}
+			return parseStatus(result.stdout);
+		} catch {
+			return null;
+		}
+	},
+};
+
+export async function workingCopy(cwd: string, signal?: AbortSignal): Promise<JjWorkingCopy | null> {
+	try {
+		const result = await jj(
+			cwd,
+			[
+				"log",
+				"-r",
+				"@",
+				"--no-graph",
+				"--color",
+				"never",
+				"-T",
+				'change_id.shortest(8) ++ "\\n" ++ commit_id.shortest(8) ++ "\\n" ++ description.first_line() ++ "\\n" ++ bookmarks.join(" ")',
+			],
+			{ signal },
+		);
+		if (result.exitCode !== 0) {
+			return null;
+		}
+		return parseWorkingCopy(result.stdout);
+	} catch {
+		return null;
+	}
+}

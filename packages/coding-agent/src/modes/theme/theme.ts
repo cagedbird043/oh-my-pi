@@ -100,6 +100,7 @@ export type SymbolKey =
 	| "icon.scratchFolder"
 	| "icon.file"
 	| "icon.git"
+	| "icon.jj"
 	| "icon.branch"
 	| "icon.pr"
 	| "icon.tokens"
@@ -300,6 +301,7 @@ const UNICODE_SYMBOLS: SymbolMap = {
 	"icon.scratchFolder": "🗑",
 	"icon.file": "📄",
 	"icon.git": "⎇",
+	"icon.jj": "⎇",
 	"icon.branch": "⑂",
 	"icon.pr": "⤴",
 	"icon.tokens": "🪙",
@@ -559,6 +561,7 @@ const NERD_SYMBOLS: SymbolMap = {
 	"icon.file": "\uf15b",
 	// pick:  | alt:  ⎇
 	"icon.git": "\uf1d3",
+	"icon.jj": "\udb84\uddff",
 	// pick:  | alt:  ⎇
 	"icon.branch": "\uf126",
 	// pick:  (nf-cod-git_pull_request) | alt:  (nf-oct-git_pull_request)
@@ -803,6 +806,7 @@ const ASCII_SYMBOLS: SymbolMap = {
 	"icon.scratchFolder": "[T]",
 	"icon.file": "[F]",
 	"icon.git": "git:",
+	"icon.jj": "jj:",
 	"icon.branch": "@",
 	"icon.pr": "PR",
 	"icon.tokens": "tok:",
@@ -1772,6 +1776,7 @@ export class Theme {
 			scratchFolder: this.#symbols["icon.scratchFolder"],
 			file: this.#symbols["icon.file"],
 			git: this.#symbols["icon.git"],
+			jj: this.#symbols["icon.jj"],
 			branch: this.#symbols["icon.branch"],
 			pr: this.#symbols["icon.pr"],
 			tokens: this.#symbols["icon.tokens"],

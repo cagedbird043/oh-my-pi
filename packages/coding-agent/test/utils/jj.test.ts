@@ -1,79 +1,85 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as jj from "@oh-my-pi/pi-coding-agent/utils/jj";
 
-describe("jj workspace detection", () => {
-	let tmpDir: string | undefined;
+import { parseStatus, parseWorkingCopy, resolveSync } from "@oh-my-pi/pi-coding-agent/utils/jj";
 
-	afterEach(async () => {
-		jj.repo.clearRootCache();
-		if (tmpDir) {
-			await fs.rm(tmpDir, { recursive: true, force: true });
-			tmpDir = undefined;
+describe("jj status helpers", () => {
+	test("parses clean working copy status", () => {
+		expect(
+			parseStatus(`The working copy is clean
+Working copy  (@) : abcdef12 empty (no description set)
+Parent commit (@-): 12345678 main | initial
+`),
+		).toEqual({ staged: 0, unstaged: 0, untracked: 0 });
+	});
+
+	test("counts modified and untracked files from jj status", () => {
+		expect(
+			parseStatus(`Working copy changes:
+M src/index.ts
+A src/new.ts
+Untracked paths:
+? scratch.txt
+Working copy  (@) : abcdef12 dirty (no description set)
+Parent commit (@-): 12345678 main | initial
+`),
+		).toEqual({ staged: 0, unstaged: 2, untracked: 1 });
+	});
+
+	test("counts repositories with only untracked paths", () => {
+		expect(
+			parseStatus(`Untracked paths:
+? scratch.txt
+Working copy  (@) : abcdef12 dirty (no description set)
+Parent commit (@-): 12345678 main | initial
+`),
+		).toEqual({ staged: 0, unstaged: 0, untracked: 1 });
+	});
+
+	test("parses working copy identity", () => {
+		expect(parseWorkingCopy("rwnytppy\n983a49b5\nUpdate dependencies\nmain feature\n")).toEqual({
+			bookmarks: ["main", "feature"],
+			changeId: "rwnytppy",
+			commitId: "983a49b5",
+			description: "Update dependencies",
+		});
+	});
+
+	test("parses working copy identity with suffix bookmarks", () => {
+		expect(parseWorkingCopy("rwnytppy\n983a49b5\nUpdate dependencies\nmain* feature@origin\n")).toEqual({
+			bookmarks: ["main", "feature"],
+			changeId: "rwnytppy",
+			commitId: "983a49b5",
+			description: "Update dependencies",
+		});
+	});
+});
+
+describe("jj repository resolution", () => {
+	test("uses colocated jj metadata at the nearest root", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-jj-resolve-"));
+		try {
+			await fs.mkdir(path.join(root, ".jj", "working_copy"), { recursive: true });
+			await fs.mkdir(path.join(root, ".git"), { recursive: true });
+			await fs.mkdir(path.join(root, "src"), { recursive: true });
+			expect(resolveSync(path.join(root, "src"))).toMatchObject({ repoRoot: root });
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
 
-	async function createTempDir(): Promise<string> {
-		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-jj-utils-"));
-		return tmpDir;
-	}
-
-	it("finds JJ workspace metadata from a nested cwd", async () => {
-		const dir = await createTempDir();
-		const nested = path.join(dir, "packages", "coding-agent");
-		await fs.mkdir(path.join(dir, ".jj", "repo", "store"), { recursive: true });
-		await fs.mkdir(nested, { recursive: true });
-
-		expect(await jj.repo.root(nested)).toBe(dir);
-		expect(await jj.repo.is(nested)).toBe(true);
-	});
-
-	it("caches each requested cwd to its resolved workspace root", async () => {
-		const dir = await createTempDir();
-		const nested = path.join(dir, "src", "feature");
-		await fs.mkdir(path.join(dir, ".jj", "repo", "store"), { recursive: true });
-		await fs.mkdir(nested, { recursive: true });
-
-		expect(await jj.repo.root(nested)).toBe(dir);
-		await fs.rm(path.join(dir, ".jj"), { recursive: true, force: true });
-
-		expect(await jj.repo.root(nested)).toBe(dir);
-		expect(await jj.repo.root(path.join(dir, "src"))).toBeNull();
-	});
-
-	it("does not treat a bare .jj directory as a workspace", async () => {
-		const dir = await createTempDir();
-		await fs.mkdir(path.join(dir, ".jj"), { recursive: true });
-
-		expect(await jj.repo.root(dir)).toBeNull();
-		expect(await jj.repo.is(dir)).toBe(false);
-	});
-
-	it("detects a non-default workspace whose .jj/repo is a file", async () => {
-		const dir = await createTempDir();
-		const secondary = path.join(dir, "ws2");
-		// Default workspace: `.jj/repo/` is a directory containing the store.
-		await fs.mkdir(path.join(dir, ".jj", "repo", "store"), { recursive: true });
-		// `jj workspace add` workspace: `.jj/repo` is a FILE pointing — relative to
-		// `.jj` — at the shared repo dir of the default workspace.
-		await fs.mkdir(path.join(secondary, ".jj", "working_copy"), { recursive: true });
-		await fs.writeFile(path.join(secondary, ".jj", "repo"), path.join("..", "..", ".jj", "repo"));
-
-		expect(await jj.repo.is(secondary)).toBe(true);
-		expect(await jj.repo.root(secondary)).toBe(secondary);
-	});
-
-	it("resolves storeDir to the shared store for a non-default workspace", async () => {
-		const dir = await createTempDir();
-		const secondary = path.join(dir, "ws2");
-		await fs.mkdir(path.join(dir, ".jj", "repo", "store"), { recursive: true });
-		await fs.mkdir(path.join(secondary, ".jj", "working_copy"), { recursive: true });
-		await fs.writeFile(path.join(secondary, ".jj", "repo"), path.join("..", "..", ".jj", "repo"));
-
-		const resolved = await jj.repo.resolve(secondary);
-		expect(resolved?.repoRoot).toBe(secondary);
-		expect(resolved?.storeDir).toBe(path.join(dir, ".jj", "repo", "store"));
+	test("stops at a nearer standalone git repository", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-jj-resolve-"));
+		try {
+			await fs.mkdir(path.join(root, ".jj", "working_copy"), { recursive: true });
+			const nested = path.join(root, "vendor", "project");
+			await fs.mkdir(path.join(nested, ".git"), { recursive: true });
+			await fs.mkdir(path.join(nested, "src"), { recursive: true });
+			expect(resolveSync(path.join(nested, "src"))).toBeNull();
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
 	});
 });

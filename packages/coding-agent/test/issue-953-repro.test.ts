@@ -36,8 +36,9 @@ function createCtx(usage: Partial<SegmentContext["usageStats"]>): SegmentContext
 		autoCompactEnabled: false,
 		subagentCount: 0,
 		sessionStartTime: Date.now(),
-		git: {
-			branch: null,
+		vcs: {
+			kind: "git",
+			label: null,
 			status: null,
 			pr: null,
 		},

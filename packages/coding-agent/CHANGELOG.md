@@ -143,6 +143,7 @@
 
 - Fixed `/model` in the TUI to open the model setup picker again, leaving `/switch` as the temporary session model switcher ([#2933](https://github.com/can1357/oh-my-pi/issues/2933)).
 - Fixed OpenCode Go sessions recording per-request cost history so `/usage` can show local cap utilization. ([#2942](https://github.com/can1357/oh-my-pi/issues/2942))
+- Added first-class status-line support for Jujutsu (`jj`) repositories, showing active bookmarks, change IDs, and dirty file status.
 
 ## [16.0.6] - 2026-06-18
 

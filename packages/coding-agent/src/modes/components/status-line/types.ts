@@ -41,6 +41,8 @@ export type EffectiveStatusLineSettings = Required<
 // Segment Rendering
 // ═══════════════════════════════════════════════════════════════════════════
 
+export type VcsKind = "git" | "jj";
+
 export type RGB = readonly [number, number, number];
 
 export interface SegmentContext {
@@ -77,8 +79,9 @@ export interface SegmentContext {
 	autoCompactEnabled: boolean;
 	subagentCount: number;
 	sessionStartTime: number;
-	git: {
-		branch: string | null;
+	vcs: {
+		kind: VcsKind;
+		label: string | null;
 		status: { staged: number; unstaged: number; untracked: number } | null;
 		pr: { number: number; url: string } | null;
 	};
