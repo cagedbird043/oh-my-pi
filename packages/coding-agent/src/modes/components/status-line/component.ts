@@ -843,14 +843,6 @@ export class StatusLineComponent implements Component {
 
 	#buildStatusLine(width: number): string {
 		const effectiveSettings = this.#resolveSettings();
-		const projectDir = getProjectDir();
-		const jjRepo = jj.available() ? jj.resolveSync(projectDir) : null;
-		fs.writeFileSync("/tmp/debug-jj.json", JSON.stringify({
-			available: jj.available(),
-			projectDir,
-			jjRepo: jjRepo ? { jjDir: jjRepo.jjDir, repoRoot: jjRepo.repoRoot, workingCopyPath: jjRepo.workingCopyPath } : null,
-			vcs: this.#getCurrentVcs(),
-		}, null, 2));
 		const includeContext =
 			hasContextSegment(effectiveSettings.leftSegments) || hasContextSegment(effectiveSettings.rightSegments);
 		const gitEnabled = this.#gitEnabled();
