@@ -62,9 +62,20 @@ describe("jj repository resolution", () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-jj-resolve-"));
 		try {
 			await fs.mkdir(path.join(root, ".jj", "working_copy"), { recursive: true });
+			await fs.writeFile(path.join(root, ".jj", "repo"), "");
 			await fs.mkdir(path.join(root, ".git"), { recursive: true });
 			await fs.mkdir(path.join(root, "src"), { recursive: true });
 			expect(resolveSync(path.join(root, "src"))).toMatchObject({ repoRoot: root });
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("does not treat a bare .jj directory as a workspace", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-jj-resolve-"));
+		try {
+			await fs.mkdir(path.join(root, ".jj"), { recursive: true });
+			expect(resolveSync(root)).toBeNull();
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}
@@ -74,6 +85,7 @@ describe("jj repository resolution", () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-jj-resolve-"));
 		try {
 			await fs.mkdir(path.join(root, ".jj", "working_copy"), { recursive: true });
+			await fs.writeFile(path.join(root, ".jj", "repo"), "");
 			const nested = path.join(root, "vendor", "project");
 			await fs.mkdir(path.join(nested, ".git"), { recursive: true });
 			await fs.mkdir(path.join(nested, "src"), { recursive: true });

@@ -247,12 +247,14 @@ export const repo = {
 	},
 };
 
+/** Summary of Jujutsu working copy status. */
 export interface JjStatusSummary {
 	staged: number;
 	unstaged: number;
 	untracked: number;
 }
 
+/** Representation of the active Jujutsu working copy commit. */
 export interface JjWorkingCopy {
 	bookmarks: string[];
 	changeId: string;
@@ -260,21 +262,24 @@ export interface JjWorkingCopy {
 	description: string;
 }
 
+/** Synchronous representation of a Jujutsu repository directory. */
 export interface JjRepositorySync {
 	jjDir: string;
 	repoRoot: string;
 	workingCopyPath: string;
 }
 
+/** Check whether the Jujutsu command is available in the current PATH. */
 export function available(): boolean {
 	return $which("jj") !== null;
 }
 
+/** Synchronously resolve the nearest Jujutsu repository from the given directory. */
 export function resolveSync(cwd: string): JjRepositorySync | null {
 	let dir = path.resolve(cwd);
 	while (true) {
 		const jjDir = path.join(dir, ".jj");
-		if (fs.existsSync(jjDir)) {
+		if (fs.existsSync(path.join(jjDir, "repo"))) {
 			return {
 				jjDir,
 				repoRoot: dir,
@@ -288,6 +293,7 @@ export function resolveSync(cwd: string): JjRepositorySync | null {
 	}
 }
 
+/** Parse raw stdout from `jj status` into a JjStatusSummary. */
 export function parseStatus(text: string): JjStatusSummary {
 	let unstaged = 0;
 	let untracked = 0;
@@ -321,6 +327,7 @@ export function parseStatus(text: string): JjStatusSummary {
 	return { staged: 0, unstaged, untracked };
 }
 
+/** Parse raw stdout from `jj log` into a JjWorkingCopy. */
 export function parseWorkingCopy(text: string): JjWorkingCopy | null {
 	const [changeId = "", commitId = "", description = "", bookmarksRaw = ""] = text.trimEnd().split("\n");
 	if (!changeId) return null;
