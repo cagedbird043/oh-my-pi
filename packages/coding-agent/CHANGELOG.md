@@ -46,6 +46,14 @@
 - Added the edit.citationTags setting to emit model-facing hashline section headers as OpenAI citation markers with opaque source IDs, along with citation-marker unwrapping for hashline edit parsing, diff previews, and streaming matching.
 - Added mutable session titles with automatic replan title refreshes and configurable idle recaps.
 - Added support for incremental yield submissions with typed sections and final results for subagents.
+ - Added `anysearch` web search provider, supporting both credentials-based and anonymous MCP search fallbacks.
+ - Added mouse support for scrolling and interaction in the debug log and raw SSE stream viewers.
+ - Added the `statusLine.compactThinkingLevel` setting to render the model segment's thinking level as a single leading glyph instead of a separate text suffix.
+ - Added support for tracking reasoning tokens in session and advisor statistics.
+ - Added Remote Compaction V2 streaming configuration settings (`compaction.remoteStreamingV2Enabled` and `compaction.v2RetainedMessageBudget`) to control token budgets and toggle V2 streaming for remote compaction.
+ - Added the `edit.citationTags` setting to emit model-facing hashline section headers as OpenAI citation markers with opaque source IDs, along with citation-marker unwrapping for hashline edit parsing, diff previews, and streaming matching.
+ - Added mutable session titles backed by a fixed JSONL title slot with append-only title-change audit entries, replan title refresh, and configurable idle recaps.
+ - Added incremental `yield` submissions with typed sections and last-turn final results for subagents.
 
 ### Changed
 
@@ -313,8 +321,6 @@
 - Changed the `eval` tool to take a single cell per call (`{ language, code, title?, timeout?, reset? }`) instead of a `cells` array. State still persists per language across separate eval calls, tool calls, and `task` subagents, so each call is one logical step that reuses everything earlier calls defined — the array only encouraged re-importing/re-declaring the same setup in every batch. The schema, field descriptions, examples, system `eval.md`/`workflowz` helper docs, and the `[i/n]` cell-counter (now hidden for single cells) were updated to match; the renderer, ACP start-text, copy-targets, and collab-web tool view still parse legacy multi-cell transcripts.
 
 ### Added
-
-- Added `isolated`, `apply`, and `merge` options to eval `agent()` across every workflow runtime (Python, JavaScript, Ruby, Julia) so `workflowz`-driven fan-outs can request the same copy-on-write worktree isolation the `task` tool offers (strict opt-in via `isolated: true`, matching the `task` tool; `apply: false` keeps captured patches/branches without merging back; `merge: false` forces patch mode). Extracted the task-isolation lifecycle into `task/isolation-runner.ts` so the eval bridge and `TaskTool` share one implementation ([#3196](https://github.com/can1357/oh-my-pi/issues/3196))
 
 ### Changed
 

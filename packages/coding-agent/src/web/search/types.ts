@@ -43,6 +43,11 @@ export const SEARCH_PROVIDER_OPTIONS = [
 	{ value: "parallel", label: "Parallel", description: "Requires PARALLEL_API_KEY" },
 	{ value: "synthetic", label: "Synthetic", description: "Requires SYNTHETIC_API_KEY" },
 	{ value: "searxng", label: "SearXNG", description: "Requires SEARXNG_ENDPOINT or searxng.endpoint" },
+	{
+		value: "anysearch",
+		label: "AnySearch",
+		description: "Uses ANYSEARCH_API_KEY when configured; explicit selection falls back to anonymous MCP search",
+	},
 	{ value: "duckduckgo", label: "DuckDuckGo", description: "Uses DuckDuckGo Instant Answer API (no API key)" },
 ] as const;
 

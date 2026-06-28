@@ -21,6 +21,9 @@
 - Fixed OpenAI stream read errors being incorrectly classified as non-transient, enabling the coding agent to automatically retry after recoverable stream failures
 
 ## [16.2.3] - 2026-06-28
+### Added
+
+ - Added `anysearch` registry provider definition and interactive credentials login support.
 
 ### Changed
 
@@ -33,6 +36,12 @@
 - Enabled freeform tool patch support for Azure OpenAI and Codex models.
 - Fixed an issue where the `/usage show` command returned "No usage data available" when using a custom proxy base URL for Codex.
 
+ - Defaulted reasoning context to all_turns for all Codex requests
+
+### Fixed
+
+ - Enabled freeform tool patch support for Azure OpenAI and Codex models
+ - Fixed /usage show returning "No usage data available" when using a custom proxy base URL for Codex by routing usage and credit-reset requests to the canonical ChatGPT origin
 ## [16.2.2] - 2026-06-27
 
 ### Added
@@ -178,7 +187,6 @@
 
 - Fixed Anthropic-compatible thinking requests sending replayed thinking blocks without `context_management.keep: "all"`, preserving multi-turn reasoning context for API-key providers. API-key requests now also advertise the required `context-management-2025-06-27` beta header so the field is honored instead of rejected. Injected SDK clients, GitHub Copilot's Anthropic proxy, and Vertex rawPredict are excluded because this code path cannot add the beta to caller-owned clients, Copilot strips Anthropic betas and demotes thinking blocks to text upstream, and Vertex expects betas in the JSON body rather than the Anthropic HTTP beta header. ([#3288](https://github.com/can1357/oh-my-pi/issues/3288))
 - Fixed OpenRouter Responses native history replay leaking Gemini reasoning item `format` metadata back into follow-up requests, which caused HTTP 400 rejections while preserving encrypted reasoning replay.
-
 ## [16.1.15] - 2026-06-22
 
 ### Fixed
