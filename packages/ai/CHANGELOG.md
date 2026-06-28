@@ -32,6 +32,9 @@
 
 - Enabled freeform tool patch support for Azure OpenAI and Codex models.
 - Fixed an issue where the `/usage show` command returned "No usage data available" when using a custom proxy base URL for Codex.
+ - Enabled freeform tool patch support for Azure OpenAI and Codex models
+ - Fixed /usage show returning "No usage data available" when using a custom proxy base URL for Codex by routing usage and credit-reset requests to the canonical ChatGPT origin
+ - Fixed a thinking block leakage issue under Antigravity (Daily Cloud Code Assist) where Gemini stream parts omit thought: true on subsequent deltas and cause reasoning leakage into the visible text stream
 
 ## [16.2.2] - 2026-06-27
 

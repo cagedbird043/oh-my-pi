@@ -709,7 +709,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 					if (candidate?.content?.parts) {
 						for (const part of candidate.content.parts) {
 							if (part.text !== undefined && part.text !== "") {
-								const isThinking = isThinkingPart(part);
+								const isThinking = isThinkingPart(part, !!options?.thinking?.enabled);
 								if (
 									!currentBlock ||
 									(isThinking && currentBlock.type !== "thinking") ||
