@@ -7,9 +7,13 @@ describe("Google thinking detection (thoughtSignature)", () => {
 		expect(isThinkingPart({ thought: true, thoughtSignature: "opaque-signature" })).toBe(true);
 	});
 
-	it("does not treat thoughtSignature alone as thinking", () => {
-		expect(isThinkingPart({ thought: undefined, thoughtSignature: "opaque-signature" })).toBe(false);
-		expect(isThinkingPart({ thought: false, thoughtSignature: "opaque-signature" })).toBe(false);
+	it("does not treat thoughtSignature alone as thinking if thinking is disabled", () => {
+		expect(isThinkingPart({ thought: undefined, thoughtSignature: "opaque-signature" }, false)).toBe(false);
+		expect(isThinkingPart({ thought: false, thoughtSignature: "opaque-signature" }, false)).toBe(false);
+	});
+
+	it("treats thoughtSignature alone as thinking if thinking is enabled", () => {
+		expect(isThinkingPart({ thought: undefined, thoughtSignature: "opaque-signature" }, true)).toBe(true);
 	});
 
 	it("does not treat empty/missing signatures as thinking if thought is not set", () => {

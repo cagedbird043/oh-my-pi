@@ -90,8 +90,10 @@ export interface GoogleSharedStreamOptions extends StreamOptions {
  *
  * See: https://ai.google.dev/gemini-api/docs/thought-signatures
  */
-export function isThinkingPart(part: Pick<Part, "thought" | "thoughtSignature">): boolean {
-	return part.thought === true;
+export function isThinkingPart(part: Pick<Part, "thought" | "thoughtSignature">, thinkingEnabled?: boolean): boolean {
+	if (part.thought === true) return true;
+	if (part.thought === false) return false;
+	return !!thinkingEnabled && typeof part.thoughtSignature === "string" && part.thoughtSignature.length > 0;
 }
 
 /**
@@ -573,8 +575,9 @@ export async function consumeGoogleStream<T extends GoogleApiType>(args: {
 	/** Vertex preserves `textSignature` on streamed text deltas; google-generative-ai does not. */
 	retainTextSignature?: boolean;
 	onFirstToken?: () => void;
+	thinkingEnabled?: boolean;
 }): Promise<void> {
-	const { googleStream, output, stream, model, options, retainTextSignature, onFirstToken } = args;
+	const { googleStream, output, stream, model, options, retainTextSignature, onFirstToken, thinkingEnabled } = args;
 	const blocks = output.content;
 	const blockIndex = () => blocks.length - 1;
 	let currentBlock: TextContent | ThinkingContent | null = null;
@@ -609,7 +612,7 @@ export async function consumeGoogleStream<T extends GoogleApiType>(args: {
 						firstTokenSeen = true;
 						onFirstToken?.();
 					}
-					const isThinking = isThinkingPart(part);
+					const isThinking = isThinkingPart(part, !!thinkingEnabled);
 					if (
 						!currentBlock ||
 						(isThinking && currentBlock.type !== "thinking") ||
@@ -950,6 +953,7 @@ export function streamGoogleGenAI<T extends "google-generative-ai" | "google-ver
 					onFirstToken: () => {
 						firstTokenTime = performance.now();
 					},
+					thinkingEnabled: !!options?.thinking?.enabled,
 				});
 
 				if (output.stopReason !== "stop" || hasMeaningfulGoogleContent(output)) break;
