@@ -35,6 +35,7 @@ import { armPreResponseTimeout, getStreamFirstEventTimeoutMs } from "../utils/id
 // Refresh is the sole responsibility of AuthStorage (broker-aware, single-flighted);
 // the stream provider trusts the access token threaded through `options.apiKey`.
 import { normalizeSchemaForCCA } from "../utils/schema";
+import { StreamMarkupHealing, type StreamMarkupHealingEvent } from "../utils/stream-markup-healing";
 import type { Content, FunctionCallingConfigMode, ThinkingConfig } from "./google-shared";
 import {
 	convertMessages,
@@ -670,16 +671,64 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 				let textBuffer = "";
 				let bufferedTextSignature: string | undefined;
 
+				const streamMarkupHealing = new StreamMarkupHealing({ pattern: "thinking" });
+				const ensureCurrentBlock = (isThinking: boolean): TextContent | ThinkingContent => {
+					if (
+						!currentBlock ||
+						(isThinking && currentBlock.type !== "thinking") ||
+						(!isThinking && currentBlock.type !== "text")
+					) {
+						if (currentBlock) {
+							pushBlockEndEvent(currentBlock, blockIndex(), output, stream);
+						}
+						currentBlock = startTextOrThinkingBlock(isThinking, output, stream, ensureStarted);
+					}
+					return currentBlock;
+				};
 				const emitVisibleText = (delta: string, thoughtSignature?: string) => {
-					if (!delta || !currentBlock || currentBlock.type !== "text") return;
-					currentBlock.text += delta;
-					currentBlock.textSignature = retainThoughtSignature(currentBlock.textSignature, thoughtSignature);
+					if (!delta) return;
+					const block = ensureCurrentBlock(false);
+					if (block.type !== "text") return;
+					block.text += delta;
+					block.textSignature = retainThoughtSignature(block.textSignature, thoughtSignature);
 					stream.push({
 						type: "text_delta",
 						contentIndex: blockIndex(),
 						delta,
 						partial: output,
 					});
+				};
+				const emitThinkingDelta = (delta: string, thoughtSignature?: string) => {
+					if (!delta) return;
+					const block = ensureCurrentBlock(true);
+					if (block.type !== "thinking") return;
+					block.thinking += delta;
+					block.thinkingSignature = retainThoughtSignature(block.thinkingSignature, thoughtSignature);
+					stream.push({
+						type: "thinking_delta",
+						contentIndex: blockIndex(),
+						delta,
+						partial: output,
+					});
+				};
+				const emitHealedEvent = (event: StreamMarkupHealingEvent, thoughtSignature?: string) => {
+					if (event.type === "text") {
+						emitVisibleText(event.text, thoughtSignature);
+						return;
+					}
+					if (event.type === "thinking") {
+						emitThinkingDelta(event.thinking);
+					}
+				};
+				const emitHealedVisibleText = (delta: string, thoughtSignature?: string) => {
+					for (const event of streamMarkupHealing.feedEvents(delta)) {
+						emitHealedEvent(event, thoughtSignature);
+					}
+				};
+				const flushHealedVisibleText = () => {
+					for (const event of streamMarkupHealing.flushEvents()) {
+						emitHealedEvent(event);
+					}
 				};
 
 				for await (const chunk of readSseJson<CloudCodeAssistResponseChunk>(
@@ -710,41 +759,24 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 						for (const part of candidate.content.parts) {
 							if (part.text !== undefined && part.text !== "") {
 								const isThinking = isThinkingPart(part, !!options?.thinking?.enabled);
-								if (
-									!currentBlock ||
-									(isThinking && currentBlock.type !== "thinking") ||
-									(!isThinking && currentBlock.type !== "text")
-								) {
-									if (currentBlock) {
-										pushBlockEndEvent(currentBlock, blockIndex(), output, stream);
-									}
-									currentBlock = startTextOrThinkingBlock(isThinking, output, stream, ensureStarted);
-								}
-								if (currentBlock.type === "thinking") {
-									currentBlock.thinking += part.text;
-									currentBlock.thinkingSignature = retainThoughtSignature(
-										currentBlock.thinkingSignature,
-										part.thoughtSignature,
-									);
-									stream.push({
-										type: "thinking_delta",
-										contentIndex: blockIndex(),
-										delta: part.text,
-										partial: output,
-									});
+								if (isThinking) {
+									flushHealedVisibleText();
+									emitThinkingDelta(part.text, part.thoughtSignature);
 								} else {
 									if (isBuffering) {
+										ensureCurrentBlock(false);
 										textBuffer += part.text;
 										bufferedTextSignature = retainThoughtSignature(
 											bufferedTextSignature,
 											part.thoughtSignature,
 										);
 									} else if (isFlashLeakModel && part.text.trimStart().startsWith("{")) {
+										ensureCurrentBlock(false);
 										isBuffering = true;
 										textBuffer = part.text;
 										bufferedTextSignature = part.thoughtSignature;
 									} else {
-										emitVisibleText(part.text, part.thoughtSignature);
+										emitHealedVisibleText(part.text, part.thoughtSignature);
 									}
 
 									if (isBuffering) {
@@ -757,7 +789,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 											isBuffering = false;
 											textBuffer = "";
 											bufferedTextSignature = undefined;
-											emitVisibleText(buffered.visibleText, visibleSignature);
+											emitHealedVisibleText(buffered.visibleText, visibleSignature);
 										}
 									}
 								}
@@ -776,13 +808,14 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 							}
 
 							if (part.functionCall) {
+								flushHealedVisibleText();
 								if (currentBlock) {
 									pushBlockEndEvent(currentBlock, blockIndex(), output, stream);
 									currentBlock = null;
 								}
 								isBuffering = false;
 								textBuffer = "";
-
+								bufferedTextSignature = undefined;
 								const providedId = part.functionCall.id;
 								const needsNewId =
 									!providedId || output.content.some(b => b.type === "toolCall" && b.id === providedId);
@@ -848,12 +881,14 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 						sawLeak = true;
 					}
 					if (buffered.kind !== "incomplete") {
-						emitVisibleText(buffered.visibleText, bufferedTextSignature);
+						emitHealedVisibleText(buffered.visibleText, bufferedTextSignature);
 					}
 					bufferedTextSignature = undefined;
 					isBuffering = false;
 					textBuffer = "";
 				}
+
+				flushHealedVisibleText();
 
 				if (currentBlock) {
 					pushBlockEndEvent(currentBlock, blockIndex(), output, stream);

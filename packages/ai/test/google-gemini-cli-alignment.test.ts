@@ -556,6 +556,49 @@ describe("Google Gemini CLI alignment", () => {
 		});
 	});
 
+	describe("fenced thinking healing", () => {
+		it("heals leaked ```thinking fences into thinking events on the shared Cloud Code Assist stream", async () => {
+			const sseChunks = [
+				'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"```thin"}]}}]}}\n\n',
+				'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"king\\nstep 1\\n```最终答案"}]},"finishReason":"STOP"}]}}\n\n',
+			];
+
+			const fetchMock: FetchImpl = async () => {
+				const stream = new ReadableStream({
+					start(controller) {
+						const encoder = new TextEncoder();
+						for (const chunk of sseChunks) {
+							controller.enqueue(encoder.encode(chunk));
+						}
+						controller.close();
+					},
+				});
+				return new Response(stream, {
+					status: 200,
+					headers: { "Content-Type": "text/event-stream" },
+				});
+			};
+
+			const model = createModel("google-antigravity");
+			const events: AssistantMessageEvent[] = [];
+			const stream = streamGoogleGeminiCli(model, createContext(), {
+				apiKey: JSON.stringify({ token: "token", projectId: "proj-123" }),
+				fetch: fetchMock,
+			});
+			for await (const event of stream) {
+				events.push(event);
+			}
+			const result = await stream.result();
+
+			expect(result.content).toEqual([
+				{ type: "thinking", thinking: "step 1\n" },
+				{ type: "text", text: "最终答案" },
+			]);
+			expect(events.some(e => e.type === "thinking_start")).toBe(true);
+			expect(events.some(e => e.type === "thinking_delta" && e.delta === "step 1\n")).toBe(true);
+			expect(events.some(e => e.type === "text_delta" && e.delta.includes("```thinking"))).toBe(false);
+		});
+	});
 	describe("planning leak interception", () => {
 		it("intercepts fragmented planning leak and discards it", async () => {
 			const sseChunks = [
