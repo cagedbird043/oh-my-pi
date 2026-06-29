@@ -730,6 +730,13 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 						emitHealedEvent(event);
 					}
 				};
+				const retainCurrentBlockSignature = (block: TextContent | ThinkingContent, thoughtSignature: string) => {
+					if (block.type === "thinking") {
+						block.thinkingSignature = retainThoughtSignature(block.thinkingSignature, thoughtSignature);
+					} else {
+						block.textSignature = retainThoughtSignature(block.textSignature, thoughtSignature);
+					}
+				};
 
 				for await (const chunk of readSseJson<CloudCodeAssistResponseChunk>(
 					activeResponse.body!,
@@ -794,17 +801,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 									}
 								}
 							} else if (part.text === "" && part.thoughtSignature && currentBlock && !part.functionCall) {
-								if (currentBlock.type === "thinking") {
-									currentBlock.thinkingSignature = retainThoughtSignature(
-										currentBlock.thinkingSignature,
-										part.thoughtSignature,
-									);
-								} else {
-									currentBlock.textSignature = retainThoughtSignature(
-										currentBlock.textSignature,
-										part.thoughtSignature,
-									);
-								}
+								retainCurrentBlockSignature(currentBlock, part.thoughtSignature);
 							}
 
 							if (part.functionCall) {
